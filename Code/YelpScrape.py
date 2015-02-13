@@ -1,22 +1,31 @@
 #!/usr/bin/env python
+#encoding = utf-8
 
 from lxml import html  
 import requests  
 import csv
 import time
+import os
+import bs4.dammit
+from bs4.dammit import UnicodeDammit
+import sys
 
 def yelpRestaurauntList():
     yelpBusinessID = []
+    goldReviewDate =[]
     with open('yelp_infile.csv', 'r') as fyelp:
         reader = csv.reader(fyelp, delimiter = ',')
         for row in reader:
             yelpBusinessID.append(row[2])
-    return yelpBusinessID
+            goldReviewDate.append(row[5])
+    return yelpBusinessID, goldReviewDate
+
+
 
 def yelpReviewDetails(yelpBusinessID):
-
-    #If you want to use proxy servers!    
-    http_proxy  = "http://117.177.243.3:80"
+    #If you want to use proxy servers!
+    auth = requests.auth.HTTPProxyAuth('proxyman007', '')
+    http_proxy  = "http://open.proxymesh.com:31280"
     proxyDict = { 
                   "http"  : http_proxy 
                   #"https" : https_proxy, 
@@ -31,6 +40,7 @@ def yelpReviewDetails(yelpBusinessID):
     
     #Get number of pages, restauraunt type, cost of a meal etc.
     webPage = 'http://www.yelp.com/biz/' + yelpBusinessID + '?sort_by=date_desc'
+    #page = requests.get(webPage,proxies = proxyDict,auth=auth)
     page = requests.get(webPage)
     tree = html.fromstring(page.text)
     avgRate     = tree.xpath('.//meta[@itemprop="ratingValue"]/@content')[0]
@@ -77,14 +87,20 @@ def yelpReviewDetails(yelpBusinessID):
 
 
 def getRecommmendedReviews(url_list,reviewFile):
-    review =[]
     #Crawl thru all the review URLs and get the review details    
-    for pages in url_list:
-        tree        = html.parse(pages)
+    for links in url_list:
+        review =[]
+        #tree = html.parse(pages)
+        getPage = requests.get(links)
+        pages   = UnicodeDammit(getPage.text,is_html=True)
+        #tree    = html.fromstring((pages.unicode_markup).encode("utf-8","ignore"))
+        tree    = html.fromstring(pages.unicode_markup)
+        
         reviewer    = tree.xpath('.//li[@class="user-name"]/a/text()')
         #reviewerID  = [name[21:] for name in (tree.xpath('.//li[@class="user-name"]/a//@href'))]#Yelp makes it difficult to extract this for Non recommended reviews!
         reviewerID  = tree.xpath('.//li[@class="user-name"]/a//@data-hovercard-id') #Use the Hovercard ID in lieu of userID - this is available for all reviews!
         reviewDate  = tree.xpath('.//meta[@itemprop="datePublished"]/@content')
+        #eliteStatus = tree.xpath('.//li[@class="is-elite"]/a/text()')
         ratings     = tree.xpath('.//meta[@itemprop="ratingValue"]/@content')[1::1] #skip the first meta tag - that is the average rating over all users
         friendCount = tree.xpath('.//span[@class ="i-wrap ig-wrap-common i-friends-orange-common-wrap"]//text()')[1::3] #every third reading is the actual friend count
         reviewCount = tree.xpath('.//span[@class ="i-wrap ig-wrap-common i-star-orange-common-wrap"]//text()')[1::3] #every third reading is the actual sum count of all reviews
@@ -96,23 +112,24 @@ def getRecommmendedReviews(url_list,reviewFile):
         for reviewUnstruct in tree.xpath('//p[@itemprop="description"]'):
             review.append(reviewUnstruct.text_content())
         consolidateReview = zip(reviewer,reviewerID,reviewDate,ratings,friendCount,reviewCount,usefulCount,funnyCount,coolCount,recommend,review)    
-        
+        time.sleep(5)
         #Write review details to CSV file
-        with open(reviewFile, 'a',newline = '') as fin:
+        with open(reviewFile, 'a',newline = '',encoding='utf-8-sig') as fin:
             writer = csv.writer(fin, delimiter = ',')
             writer.writerows(consolidateReview)
         fin.close()
     return
 
 def getNotRecommendedReviews(url_list,reviewFile):
-    review =[]
     #Crawl thru all the review URLs and get the not recommended review details    
-    for pages in url_list:
-        tree        = html.parse(pages)   
+    review =[]
+    for links in url_list:
+        tree        = html.parse(links)   
         reviewer    = tree.xpath('.//span[@class="user-display-name"]//text()')[:10]
         #reviewerID  = [name[21:] for name in (tree.xpath('.//li[@class="user-name"]/a//@href'))]#Yelp makes it difficult to extract this for Non recommended reviews!
         reviewerID  = tree.xpath('.//span[@class="user-display-name"]//@data-hovercard-id')[:10] #Use the Hovercard ID in lieu of userID - this is available for all reviews!
         reviewDate  = [rdate.strip() for rdate in (tree.xpath('.//span[@class="rating-qualifier"]//text()'))][:10] 
+        #eliteStatus = tree.xpath('.//li[@class="is-elite"]/a/text()')
         ratings     = [int(rating[:1]) for rating in (tree.xpath('.//img[@class="offscreen"]/@alt'))][:10] #Strip unwanted String - "rating" etc.!
         friendCount = tree.xpath('.//span[@class ="i-wrap ig-wrap-common i-friends-orange-common-wrap"]//text()')[1::3][:10] #every third reading is the actual friend count
         reviewCount = tree.xpath('.//span[@class ="i-wrap ig-wrap-common i-star-orange-common-wrap"]//text()')[1::3][:10] #every third reading is the actual sum count of all reviews
@@ -120,25 +137,51 @@ def getNotRecommendedReviews(url_list,reviewFile):
         usefulCount = [0 for i in range(len(reviewer))]
         funnyCount  = [0 for i in range(len(reviewer))]
         coolCount   = [0 for i in range(len(reviewer))]
-        recommend   = [0 for i in range(len(reviewer))]        
+        recommend   = [0 for i in range(len(reviewer))]
         for reviewUnstruct in tree.xpath('//p[@lang="en"]'):
             review.append(reviewUnstruct.text_content())
         consolidateReview = zip(reviewer,reviewerID,reviewDate,ratings,friendCount,reviewCount,usefulCount,funnyCount,coolCount,recommend,review)    
-    
+        time.sleep(5)    
         #Write review details to CSV file
-        with open(reviewFile, 'a',newline = '') as fin:
+        with open(reviewFile, 'a',newline = '',encoding='utf-8-sig') as fin:
             writer = csv.writer(fin, delimiter = ',')
             writer.writerows(consolidateReview)
         fin.close()
     return
 
+def appendGoldDate(yelpBusinessID,jgReviewDate) :
+    csvfile        = 'review_' + yelpBusinessID + '.csv'
+    new_csvfile     = 'new_review_' + yelpBusinessID + '.csv'
+    goldReviewDate = jgReviewDate
+   
+    with open(csvfile,'r',encoding='utf-8-sig') as csvinput:
+        with open(new_csvfile, 'w',encoding='utf-8-sig') as csvoutput:
+            writer = csv.writer(csvoutput, lineterminator='\n')
+            reader = csv.reader(csvinput)
+            all = []
+            row = next(reader)
+            row.append('gold_reviewDate')
+            all.append(row)
+    
+            for row in reader:
+                row.append(goldReviewDate)
+                all.append(row)
+                
+            writer.writerows(all)
+            
+    os.remove(csvfile) # not needed on unix
+    os.rename('new_'+csvfile, csvfile)
+    return
+        
 
 def generateReviewFiles():
-    yelpBusinessID = yelpRestaurauntList()
+    yelpBusinessID, goldReviewDate = yelpRestaurauntList()
     for restauraunt in yelpBusinessID:
+        jgReviewDate = goldReviewDate[yelpBusinessID.index(restauraunt)]
         yelpReviewDetails(restauraunt)
         print(restauraunt)
-        time.sleep(240)
+        appendGoldDate(restauraunt,jgReviewDate)
+        time.sleep(120)
     return    
-
+    
 generateReviewFiles()
